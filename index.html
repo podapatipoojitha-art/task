@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hostel Room Management Portal</title>
+  <link rel="stylesheet" href="styles.css">
+  
+  <!-- React and ReactDOM via CDN -->
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  
+  <!-- Babel for JSX transformation in the browser -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- Lucide Icons (Browser Script) -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useCallback, useMemo } = React;
+
+    // --- MOCK DATABASE (Initial Fallback) ---
+    const defaultRooms = [
+      { id: 'r1', number: '101', capacity: 2, vacancies: 2 },
+      { id: 'r2', number: '102', capacity: 2, vacancies: 0 },
+      { id: 'r3', number: '103', capacity: 3, vacancies: 1 },
+      { id: 'r4', number: '201', capacity: 1, vacancies: 1 },
+      { id: 'r5', number: '202', capacity: 4, vacancies: 4 },
+    ];
+    const defaultApplications = [
+      { id: 'a1', studentId: 's1', studentName: 'Alice Johnson', roomId: 'r2', status: 'approved', date: '2023-10-01' },
+      { id: 'a2', studentId: 's2', studentName: 'Bob Smith', roomId: 'r2', status: 'approved', date: '2023-10-02' },
+      { id: 'a3', studentId: 's3', studentName: 'Charlie Brown', roomId: 'r3', status: 'pending', date: '2023-10-03' },
+    ];
+
+    // --- UTILITIES ---
+    const useLocalStorage = (key, initialValue) => {
+      const [storedValue, setStoredValue] = useState(() => {
+        try {
+          const item = window.localStorage.getItem(key);
+          return item ? JSON.parse(item) : initialValue;
+        } catch (error) {
+          console.error(error);
+          return initialValue;
+        }
+      });
+
+      const setValue = (value) => {
+        try {
+          const valueToStore = value instanceof Function ? value(storedValue) : value;
+          setStoredValue(valueToStore);
+          window.localStorage.setItem(key, JSON.stringify(valueToStore));
+        } catch (error) {
+          console.error(error);
+        }
+      };
+      return [storedValue, setValue];
+    };
+
+    // --- COMPONENTS ---
+
+    // Modal Component
+    const Modal = ({ isOpen, onClose, room }) => {
+      if (!isOpen || !room) return null;
+      
+      // Reliable fallback images for the hostel rooms
+      const roomImages = [
+        'https://images.unsplash.com/photo-1555854877-bab0e564b8d5?q=80&w=500&auto=format&fit=crop',
+        'https://images.unsplash.com/photo-1522771739844-6a9f6d5f14af?q=80&w=500&auto=format&fit=crop',
+        'https://images.unsplash.com/photo-1497366216548-37526070297c?q=80&w=500&auto=format&fit=crop',
+        'https://images.unsplash.com/photo-1505691938895-1758d7feb511?q=80&w=500&auto=format&fit=crop',
+        'https://images.unsplash.com/photo-1598928506311-c55d43f110c1?q=80&w=500&auto=format&fit=crop'
+      ];
+      
+      // Consistently pick an image based on the room number
+      const imageIndex = room.number ? parseInt(room.number, 10) % roomImages.length : 0;
+      const imgUrl = roomImages[imageIndex];
+
+      return (
+        <div className="modal-overlay" onClick={onClose}>
+          <div className="modal-content fade-in" onClick={e => e.stopPropagation()}>
+            <img src={imgUrl} alt="Room Preview" className="modal-image" />
+            <div className="modal-body">
+              <div className="modal-header">
+                <div>
+                  <h3 className="modal-title">Room {room.number}</h3>
+                  <p style={{ color: 'var(--text-secondary)' }}>Capacity: {room.capacity} | Vacancies: {room.vacancies}</p>
+                </div>
+                <button className="toast-close" onClick={onClose}>
+                  <i data-lucide="x"></i>
+                </button>
+              </div>
+              <p style={{ fontSize: '0.9rem', color: 'var(--text-primary)', lineHeight: 1.5 }}>
+                A premium, well-ventilated room perfect for focused studies. Features large windows, 
+                a study desk for each occupant, and modern furnishing.
+              </p>
+              <div className="amenities-list">
+                <span className="amenity-tag"><i data-lucide="wifi" style={{width: 14}}></i> High-Speed Wi-Fi</span>
+                <span className="amenity-tag"><i data-lucide="wind" style={{width: 14}}></i> Air Conditioning</span>
+                <span className="amenity-tag"><i data-lucide="book-open" style={{width: 14}}></i> Study Desks</span>
+                <span className="amenity-tag"><i data-lucide="key" style={{width: 14}}></i> Smart Lock</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    // Toast Notification System
+    const ToastContainer = ({ toasts, removeToast }) => (
+      <div className="toast-container">
+        {toasts.map(toast => (
+          <div key={toast.id} className={`toast toast-${toast.type} fade-in`}>
+            <div className="toast-icon">
+              {toast.type === 'success' && <i data-lucide="check-circle" style={{ color: 'var(--success-color)' }}></i>}
+              {toast.type === 'error' && <i data-lucide="alert-circle" style={{ color: 'var(--danger-color)' }}></i>}
+              {toast.type === 'info' && <i data-lucide="info" style={{ color: 'var(--accent-color)' }}></i>}
+            </div>
+            <div className="toast-content">
+              <div className="toast-title">{toast.title}</div>
+              <div className="toast-message">{toast.message}</div>
+            </div>
+            <button className="toast-close" onClick={() => removeToast(toast.id)}>
+              <i data-lucide="x" style={{ width: '16px', height: '16px' }}></i>
+            </button>
+          </div>
+        ))}
+      </div>
+    );
+
+    const Badge = ({ status }) => {
+      let displayStatus = status;
+      if (status === 'checked_out') displayStatus = 'checked out';
+      return (
+        <span className={`badge badge-${status}`}>
+          {displayStatus}
+        </span>
+      );
+    };
+
+    const Navbar = ({ role, onLogout }) => (
+      <nav className="navbar">
+        <div className="nav-brand">HostelPortal</div>
+        <div className="nav-links">
+          {role && (
+            <>
+              <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                Logged in as: <strong style={{ color: 'var(--text-primary)' }}>{role.toUpperCase()}</strong>
+              </span>
+              <button className="btn btn-secondary" style={{ padding: '0.4rem 1rem' }} onClick={onLogout}>
+                Logout
+              </button>
+            </>
+          )}
+        </div>
+      </nav>
+    );
+
+    const Login = ({ onLogin }) => {
+      const [roleMode, setRoleMode] = useState(null); // 'student' or 'office'
+      const [studentName, setStudentName] = useState('');
+      const [studentId, setStudentId] = useState('');
+
+      const handleStudentSubmit = (e) => {
+        e.preventDefault();
+        if (studentName.trim() && studentId.trim()) {
+          onLogin('student', studentId.trim(), studentName.trim());
+        }
+      };
+
+      if (!roleMode) {
+        return (
+          <div className="auth-container fade-in">
+            <div className="glass-panel auth-card">
+              <h2 style={{ marginBottom: '0.5rem' }}>Welcome to HostelPortal</h2>
+              <p style={{ color: 'var(--text-secondary)', marginBottom: '2rem' }}>Please select your role to continue.</p>
+              
+              <div className="auth-buttons">
+                <button className="btn btn-primary" onClick={() => setRoleMode('student')}>
+                  Login as Student
+                </button>
+                <button className="btn btn-secondary" onClick={() => onLogin('office', 'o1', 'Admin')}>
+                  Login as Hostel Office
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      if (roleMode === 'student') {
+        return (
+          <div className="auth-container fade-in">
+            <div className="glass-panel auth-card">
+              <h2 style={{ marginBottom: '0.5rem' }}>Student Registration</h2>
+              <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>Enter your details to access the portal.</p>
+              
+              <form onSubmit={handleStudentSubmit}>
+                <div className="form-group">
+                  <label>Full Name</label>
+                  <input type="text" required className="form-control" value={studentName} onChange={e => setStudentName(e.target.value)} placeholder="e.g. David Lee" />
+                </div>
+                <div className="form-group" style={{ marginBottom: '2rem' }}>
+                  <label>Student ID Number</label>
+                  <input type="text" required className="form-control" value={studentId} onChange={e => setStudentId(e.target.value)} placeholder="e.g. S10482" />
+                </div>
+                <div style={{ display: 'flex', gap: '1rem', width: '100%' }}>
+                  <button type="button" className="btn btn-secondary" style={{ flex: 1 }} onClick={() => setRoleMode(null)}>Back</button>
+                  <button type="submit" className="btn btn-primary" style={{ flex: 2 }}>Login / Register</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        );
+      }
+    };
+
+    // Student Dashboard
+    const StudentDashboard = ({ currentUser, rooms, applications, onApply }) => {
+      const [searchTerm, setSearchTerm] = useState('');
+      const [showAvailableOnly, setShowAvailableOnly] = useState(false);
+      const [modalRoom, setModalRoom] = useState(null);
+
+      const myApplications = applications.filter(app => app.studentId === currentUser.id);
+      const myApplication = myApplications.sort((a, b) => {
+        if (a.status === 'approved' || a.status === 'pending') return -1;
+        return 1;
+      })[0];
+
+      const filteredRooms = rooms.filter(room => {
+        const matchesSearch = room.number.toLowerCase().includes(searchTerm.toLowerCase());
+        const matchesAvailable = showAvailableOnly ? room.vacancies > 0 : true;
+        return matchesSearch && matchesAvailable;
+      });
+
+      return (
+        <div className="fade-in">
+          <Modal isOpen={!!modalRoom} room={modalRoom} onClose={() => setModalRoom(null)} />
+          <h2 style={{ marginBottom: '2rem' }}>Student Dashboard - Welcome, {currentUser.name}!</h2>
+
+          {myApplication ? (
+            <div className="glass-panel" style={{ marginBottom: '2rem' }}>
+              <h3 style={{ marginBottom: '1rem' }}>Latest Application Status</h3>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', padding: '1rem', background: 'rgba(255,255,255,0.05)', borderRadius: '8px' }}>
+                <div>
+                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Room Requested</p>
+                  <p style={{ fontWeight: '600', fontSize: '1.2rem' }}>
+                    {rooms.find(r => r.id === myApplication.roomId)?.number || 'Unknown'}
+                  </p>
+                </div>
+                <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
+                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.25rem' }}>Status</p>
+                  <Badge status={myApplication.status} />
+                </div>
+              </div>
+              {myApplication.status === 'rejected' && (
+                <p style={{ marginTop: '1rem', color: 'var(--danger-color)', fontSize: '0.9rem' }}>
+                  Your application was rejected. You can apply for another room below.
+                </p>
+              )}
+              {myApplication.status === 'checked_out' && (
+                <p style={{ marginTop: '1rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                  You have checked out of this room. You can apply for a new room below.
+                </p>
+              )}
+            </div>
+          ) : (
+            <div className="glass-panel" style={{ marginBottom: '2rem', borderLeft: '4px solid var(--accent-color)' }}>
+              <p>You have not applied for a room yet. Please select a room from the list below.</p>
+            </div>
+          )}
+
+          <h3 style={{ marginBottom: '1rem' }}>Available Rooms</h3>
+          
+          <div className="filter-bar">
+            <div style={{ flex: 1 }}>
+              <input 
+                type="text" 
+                className="form-control" 
+                placeholder="Search room number..." 
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+            <label className="checkbox-label">
+              <input 
+                type="checkbox" 
+                checked={showAvailableOnly} 
+                onChange={(e) => setShowAvailableOnly(e.target.checked)} 
+              />
+              Show Available Only
+            </label>
+          </div>
+
+          <div className="grid grid-cols-3">
+            {filteredRooms.map(room => (
+              <div key={room.id} className="glass-panel room-card">
+                <div className="room-header">
+                  <div className="room-number">Room {room.number}</div>
+                  {room.vacancies > 0 ? (
+                    <span style={{ color: 'var(--success-color)', fontSize: '0.85rem', fontWeight: '500' }}>Available</span>
+                  ) : (
+                    <span style={{ color: 'var(--danger-color)', fontSize: '0.85rem', fontWeight: '500' }}>Full</span>
+                  )}
+                </div>
+                <div className="room-stats">
+                  <div className="stat">
+                    <span className="stat-label">Capacity</span>
+                    <span className="stat-value">{room.capacity}</span>
+                  </div>
+                  <div className="stat">
+                    <span className="stat-label">Vacancies</span>
+                    <span className="stat-value">{room.vacancies}</span>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
+                  <button 
+                    className="btn btn-secondary btn-sm" 
+                    onClick={() => setModalRoom(room)}
+                  >
+                    View Details
+                  </button>
+                  <button 
+                    className="btn btn-primary btn-sm" 
+                    style={{ flex: 1 }}
+                    disabled={room.vacancies === 0 || (myApplication && (myApplication.status === 'pending' || myApplication.status === 'approved'))}
+                    onClick={() => onApply(room.id)}
+                  >
+                    {myApplication && (myApplication.status === 'pending' || myApplication.status === 'approved')
+                      ? 'Active Application' 
+                      : room.vacancies === 0 
+                        ? 'Full' 
+                        : 'Apply'}
+                  </button>
+                </div>
+              </div>
+            ))}
+            {filteredRooms.length === 0 && (
+              <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>
+                No rooms match your filters.
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    };
+
+    // Office Dashboard
+    const OfficeDashboard = ({ rooms, applications, onUpdateApplicationStatus, onAddRoom, onDeleteRoom }) => {
+      const [newRoomNo, setNewRoomNo] = useState('');
+      const [newRoomCap, setNewRoomCap] = useState(2);
+
+      const pendingApps = applications.filter(app => app.status === 'pending');
+      const approvedApps = applications.filter(app => app.status === 'approved');
+
+      const totalCapacity = rooms.reduce((sum, r) => sum + r.capacity, 0);
+      const totalVacancies = rooms.reduce((sum, r) => sum + r.vacancies, 0);
+      const occupancyRate = totalCapacity > 0 ? Math.round(((totalCapacity - totalVacancies) / totalCapacity) * 100) : 0;
+      
+      let progressColor = 'progress-success';
+      if (occupancyRate > 50) progressColor = 'progress-warning';
+      if (occupancyRate > 90) progressColor = 'progress-danger';
+
+      const handleAddRoomSubmit = (e) => {
+        e.preventDefault();
+        if (newRoomNo.trim()) {
+          onAddRoom(newRoomNo.trim(), parseInt(newRoomCap));
+          setNewRoomNo('');
+          setNewRoomCap(2);
+        }
+      };
+
+      const handleDownloadCSV = () => {
+        if (approvedApps.length === 0) return alert("No active residents to export.");
+
+        const headers = ["Student ID", "Student Name", "Room Number", "Check-in Date"];
+        const rows = approvedApps.map(app => {
+          const room = rooms.find(r => r.id === app.roomId);
+          return [app.studentId, app.studentName, room?.number || 'N/A', app.date];
+        });
+
+        const csvContent = [
+          headers.join(","),
+          ...rows.map(e => e.join(","))
+        ].join("\n");
+
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement("a");
+        const url = URL.createObjectURL(blob);
+        link.setAttribute("href", url);
+        link.setAttribute("download", "active_residents_report.csv");
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      };
+
+      return (
+        <div className="fade-in">
+          <h2 style={{ marginBottom: '2rem' }}>Hostel Office Dashboard</h2>
+
+          <div className="grid grid-cols-3" style={{ marginBottom: '2rem' }}>
+            <div className="glass-panel">
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', textTransform: 'uppercase' }}>Total Capacity</p>
+              <h3 style={{ fontSize: '2rem', marginTop: '0.5rem' }}>{totalCapacity}</h3>
+            </div>
+            <div className="glass-panel">
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', textTransform: 'uppercase' }}>Current Vacancies</p>
+              <h3 style={{ fontSize: '2rem', marginTop: '0.5rem', color: 'var(--accent-color)' }}>{totalVacancies}</h3>
+            </div>
+            <div className="glass-panel">
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', textTransform: 'uppercase' }}>Occupancy Rate</p>
+              <h3 style={{ fontSize: '2rem', marginTop: '0.5rem' }}>{occupancyRate}%</h3>
+              <div className="progress-container">
+                <div className={`progress-fill ${progressColor}`} style={{ width: `${occupancyRate}%` }}></div>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+              
+              {/* Pending Applications */}
+              <div className="glass-panel" style={{ overflow: 'hidden' }}>
+                <h3 style={{ marginBottom: '1rem' }}>Pending Applications</h3>
+                {pendingApps.length === 0 ? (
+                  <p style={{ color: 'var(--text-secondary)' }}>No pending applications.</p>
+                ) : (
+                  <div className="table-container">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Student</th>
+                          <th>Room</th>
+                          <th>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pendingApps.map(app => {
+                          const room = rooms.find(r => r.id === app.roomId);
+                          return (
+                            <tr key={app.id}>
+                              <td>{app.studentName} <div style={{fontSize:'0.7rem', color:'var(--text-secondary)'}}>ID: {app.studentId}</div></td>
+                              <td>{room?.number}</td>
+                              <td>
+                                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                  <button 
+                                    className="btn btn-success" 
+                                    style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}
+                                    disabled={!room || room.vacancies === 0}
+                                    onClick={() => onUpdateApplicationStatus(app.id, 'approved')}
+                                  >
+                                    Approve
+                                  </button>
+                                  <button 
+                                    className="btn btn-danger" 
+                                    style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}
+                                    onClick={() => onUpdateApplicationStatus(app.id, 'rejected')}
+                                  >
+                                    Reject
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+              
+              {/* Active Residents Checkout */}
+              <div className="glass-panel" style={{ overflow: 'hidden' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                  <h3 style={{ margin: 0 }}>Active Residents</h3>
+                  <button className="btn btn-secondary btn-sm" onClick={handleDownloadCSV}>
+                    <i data-lucide="download" style={{ width: 14, marginRight: 6 }}></i> Export CSV
+                  </button>
+                </div>
+                {approvedApps.length === 0 ? (
+                  <p style={{ color: 'var(--text-secondary)' }}>No active residents.</p>
+                ) : (
+                  <div className="table-container">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Student</th>
+                          <th>Room</th>
+                          <th>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {approvedApps.map(app => {
+                          const room = rooms.find(r => r.id === app.roomId);
+                          return (
+                            <tr key={app.id}>
+                              <td>{app.studentName}</td>
+                              <td>{room?.number}</td>
+                              <td>
+                                <button 
+                                  className="btn btn-secondary" 
+                                  style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}
+                                  onClick={() => onUpdateApplicationStatus(app.id, 'checked_out')}
+                                >
+                                  Checkout
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Add Room */}
+              <div className="glass-panel">
+                <h3 style={{ marginBottom: '1rem' }}>Add New Room</h3>
+                <form onSubmit={handleAddRoomSubmit} style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end' }}>
+                  <div className="form-group" style={{ marginBottom: 0, flex: 1 }}>
+                    <label>Room Number</label>
+                    <input type="text" required className="form-control" value={newRoomNo} onChange={e => setNewRoomNo(e.target.value)} placeholder="e.g. 301" />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0, flex: 1 }}>
+                    <label>Capacity</label>
+                    <input type="number" required min="1" max="10" className="form-control" value={newRoomCap} onChange={e => setNewRoomCap(e.target.value)} />
+                  </div>
+                  <button type="submit" className="btn btn-primary" style={{ padding: '0.75rem 1.5rem' }}>Add</button>
+                </form>
+              </div>
+            </div>
+
+            {/* Room Status Overview */}
+            <div className="glass-panel" style={{ overflow: 'hidden', alignSelf: 'start' }}>
+              <h3 style={{ marginBottom: '1rem' }}>Room Status Overview</h3>
+              <div className="table-container">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Room</th>
+                      <th>Capacity</th>
+                      <th>Occupants</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rooms.map(room => {
+                      const occupants = approvedApps.filter(app => app.roomId === room.id);
+                      return (
+                        <tr key={room.id}>
+                          <td><strong>{room.number}</strong></td>
+                          <td>
+                            {room.capacity - room.vacancies} / {room.capacity}
+                          </td>
+                          <td>
+                            <div className="occupants-list">
+                              {occupants.length === 0 ? <span style={{color: 'var(--text-secondary)'}}>Empty</span> : occupants.map(occ => (
+                                <span key={occ.id} className="occupant-pill">{occ.studentName}</span>
+                              ))}
+                            </div>
+                          </td>
+                          <td>
+                            {room.vacancies === room.capacity ? (
+                               <button className="btn btn-danger" style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }} onClick={() => onDeleteRoom(room.id)}>Delete</button>
+                            ) : (
+                               <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>In Use</span>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    // Main App Component
+    const App = () => {
+      const [currentUser, setCurrentUser] = useLocalStorage('hp_user', null);
+      const [rooms, setRooms] = useLocalStorage('hp_rooms', defaultRooms);
+      const [applications, setApplications] = useLocalStorage('hp_apps', defaultApplications);
+      const [toasts, setToasts] = useState([]);
+
+      useEffect(() => {
+        // Re-render icons on every update
+        if (window.lucide) {
+          window.lucide.createIcons();
+        }
+      });
+
+      const addToast = (title, message, type = 'info') => {
+        const id = Date.now();
+        setToasts(prev => [...prev, { id, title, message, type }]);
+        setTimeout(() => removeToast(id), 5000);
+      };
+
+      const removeToast = (id) => {
+        setToasts(prev => prev.filter(t => t.id !== id));
+      };
+
+      const handleLogin = (role, id, name) => {
+        setCurrentUser({ role, id, name });
+        addToast('Login Successful', `Welcome back, ${name}.`, 'success');
+      };
+
+      const handleLogout = () => {
+        setCurrentUser(null);
+        addToast('Logged Out', 'You have been successfully logged out.', 'info');
+      };
+
+      const handleApply = (roomId) => {
+        const room = rooms.find(r => r.id === roomId);
+        if (room && room.vacancies > 0) {
+          const newApps = applications.filter(app => app.studentId !== currentUser.id);
+          const newApp = {
+            id: `a${Date.now()}`,
+            studentId: currentUser.id,
+            studentName: currentUser.name,
+            roomId: roomId,
+            status: 'pending',
+            date: new Date().toISOString().split('T')[0]
+          };
+          setApplications([...newApps, newApp]);
+          addToast('Application Submitted', `You have applied for Room ${room.number}.`, 'success');
+        } else {
+          addToast('Action Failed', 'Sorry, this room is currently full.', 'error');
+        }
+      };
+
+      const handleUpdateApplicationStatus = (appId, newStatus) => {
+        setApplications(apps => apps.map(app => {
+          if (app.id === appId) {
+            const room = rooms.find(r => r.id === app.roomId);
+            
+            if (newStatus === 'approved') {
+              setRooms(prevRooms => prevRooms.map(r => {
+                if (r.id === app.roomId && r.vacancies > 0) {
+                  return { ...r, vacancies: r.vacancies - 1 };
+                }
+                return r;
+              }));
+              addToast('Application Approved', `Approved ${app.studentName} for Room ${room.number}.`, 'success');
+            } 
+            else if (newStatus === 'rejected') {
+              addToast('Application Rejected', `Rejected application for ${app.studentName}.`, 'info');
+            } 
+            else if (newStatus === 'checked_out') {
+              setRooms(prevRooms => prevRooms.map(r => {
+                if (r.id === app.roomId) {
+                  return { ...r, vacancies: r.vacancies + 1 };
+                }
+                return r;
+              }));
+              addToast('Checkout Complete', `${app.studentName} has been checked out of Room ${room.number}.`, 'success');
+            }
+
+            return { ...app, status: newStatus };
+          }
+          return app;
+        }));
+      };
+
+      const handleAddRoom = (number, capacity) => {
+        if (rooms.find(r => r.number === number)) {
+          addToast('Error', 'A room with this number already exists.', 'error');
+          return;
+        }
+        const newRoom = {
+          id: `r${Date.now()}`,
+          number,
+          capacity,
+          vacancies: capacity
+        };
+        setRooms([...rooms, newRoom]);
+        addToast('Room Added', `Room ${number} has been added successfully.`, 'success');
+      };
+
+      const handleDeleteRoom = (roomId) => {
+        const room = rooms.find(r => r.id === roomId);
+        if (room && room.vacancies !== room.capacity) {
+           addToast('Error', 'Cannot delete an occupied room.', 'error');
+           return;
+        }
+        setRooms(rooms.filter(r => r.id !== roomId));
+        addToast('Room Deleted', `Room ${room.number} was removed.`, 'info');
+      };
+
+      return (
+        <>
+          <ToastContainer toasts={toasts} removeToast={removeToast} />
+          <Navbar role={currentUser?.role} onLogout={handleLogout} />
+          
+          <main className="app-container">
+            {!currentUser && <Login onLogin={handleLogin} />}
+            
+            {currentUser?.role === 'student' && (
+              <StudentDashboard 
+                currentUser={currentUser} 
+                rooms={rooms} 
+                applications={applications} 
+                onApply={handleApply} 
+              />
+            )}
+
+            {currentUser?.role === 'office' && (
+              <OfficeDashboard 
+                rooms={rooms} 
+                applications={applications} 
+                onUpdateApplicationStatus={handleUpdateApplicationStatus}
+                onAddRoom={handleAddRoom}
+                onDeleteRoom={handleDeleteRoom}
+              />
+            )}
+          </main>
+        </>
+      );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
